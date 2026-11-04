@@ -1,0 +1,271 @@
+#include <Arduino.h>
+#include <TinyGPSPlus.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// ===================== WiFi =====================
+const char* ssid = "Galaxy A34 5G F4F2";
+const char* password = "123karan";
+
+// Backend API
+const char* serverURL = "http://10.216.78.61:5000/api/accidents";
+
+// ===================== Pins =====================
+#define X_PIN 34
+#define Y_PIN 35
+#define Z_PIN 32
+#define VIB_PIN 33
+#define BUZZER 25
+#define BUTTON_PIN 26
+
+// ===================== GPS =====================
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(2);
+
+// ===================== Variables =====================
+float xVal, yVal, zVal;
+float xAvg = 0;
+float yAvg = 0;
+float zAvg = 0;
+
+bool accidentTriggered = false;
+
+// ===================== Average Reading =====================
+float readAverage(int pin)
+{
+    float sum = 0;
+
+    for (int i = 0; i < 10; i++)
+    {
+        sum += analogRead(pin);
+        delay(2);
+    }
+
+    return sum / 10.0;
+}
+// ===================== Connect WiFi =====================
+void connectWiFi()
+{
+    Serial.println("\nConnecting to WiFi...");
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("\n==============================");
+    Serial.println("WiFi Connected");
+    Serial.print("IP Address : ");
+    Serial.println(WiFi.localIP());
+    Serial.println("==============================");
+}
+
+// ===================== Send Accident =====================
+void sendAccident(float lat, float lng)
+{
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("WiFi Disconnected");
+        return;
+    }
+
+    HTTPClient http;
+
+    http.begin(serverURL);
+
+    http.addHeader("Content-Type", "application/json");
+
+    StaticJsonDocument<256> doc;
+
+    doc["deviceId"] = "ESP32_001";
+    doc["latitude"] = lat;
+    doc["longitude"] = lng;
+    doc["severity"] = "High";
+    doc["accidentType"] = "Vehicle Collision";
+        String jsonData;
+
+    serializeJson(doc, jsonData);
+
+    Serial.println("==================================");
+    Serial.println("Sending Accident Data...");
+    Serial.println(jsonData);
+
+    int httpResponseCode = http.POST(jsonData);
+
+    Serial.print("HTTP Response Code : ");
+    Serial.println(httpResponseCode);
+
+    if (httpResponseCode > 0)
+    {
+        String response = http.getString();
+
+        Serial.println("Server Response:");
+        Serial.println(response);
+    }
+    else
+    {
+        Serial.print("HTTP Error : ");
+        Serial.println(http.errorToString(httpResponseCode));
+    }
+
+    http.end();
+}
+
+// ===================== Setup =====================
+void setup()
+{
+    Serial.begin(115200);
+
+    pinMode(VIB_PIN, INPUT);
+    pinMode(BUZZER, OUTPUT);
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+    digitalWrite(BUZZER, LOW);
+
+    gpsSerial.begin(9600, SERIAL_8N1, 16, 17);
+
+    Serial.println("==================================");
+    Serial.println("Smart Accident Detection Started");
+    Serial.println("==================================");
+
+    connectWiFi();
+}
+// ===================== Main Loop =====================
+void loop()
+{
+    // ---------- Maintain WiFi Connection ----------
+    static unsigned long wifiTimer = 0;
+
+    if (millis() - wifiTimer > 5000)
+    {
+        wifiTimer = millis();
+
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            Serial.println("Reconnecting WiFi...");
+
+            WiFi.disconnect();
+            WiFi.begin(ssid, password);
+        }
+    }
+
+    // ---------- Read GPS ----------
+    while (gpsSerial.available())
+    {
+        gps.encode(gpsSerial.read());
+    }
+
+    // ---------- Read Accelerometer ----------
+    xAvg = readAverage(X_PIN);
+    yAvg = readAverage(Y_PIN);
+    zAvg = readAverage(Z_PIN);
+
+    xVal = (xAvg * 3.3) / 4095.0;
+    yVal = (yAvg * 3.3) / 4095.0;
+    zVal = (zAvg * 3.3) / 4095.0;
+
+    int vibration = digitalRead(VIB_PIN);
+
+    float delta =
+        abs(xVal - 1.65) +
+        abs(yVal - 1.65) +
+        abs(zVal - 1.65);
+
+    bool accident = false;
+
+    if (delta > 0.9 && vibration == LOW)
+    {
+        accident = true;
+    }
+        // ---------- Accident Detected ----------
+    if (accident && !accidentTriggered)
+    {
+        accidentTriggered = true;
+
+        Serial.println();
+        Serial.println("********************************");
+        Serial.println("ACCIDENT DETECTED");
+        Serial.println("Press button within 30 seconds");
+        Serial.println("to cancel alert");
+        Serial.println("********************************");
+
+        unsigned long startTime = millis();
+
+        bool cancelled = false;
+        bool buzzerState = false;
+        unsigned long lastBuzz = 0;
+
+        while (millis() - startTime < 30000)
+        {
+            while (gpsSerial.available())
+            {
+                gps.encode(gpsSerial.read());
+            }
+
+            if (millis() - lastBuzz > 300)
+            {
+                buzzerState = !buzzerState;
+                digitalWrite(BUZZER, buzzerState);
+                lastBuzz = millis();
+            }
+
+            if (digitalRead(BUTTON_PIN) == LOW)
+            {
+                cancelled = true;
+
+                Serial.println("Alert Cancelled by User");
+
+                break;
+            }
+
+            delay(10);
+        }
+
+        digitalWrite(BUZZER, LOW);
+                // ---------- Send Accident Data ----------
+        if (!cancelled)
+        {
+            Serial.println();
+            Serial.println("Sending Accident Data to Server...");
+
+            if (gps.location.isValid())
+            {
+                float lat = gps.location.lat();
+                float lng = gps.location.lng();
+
+                Serial.print("Latitude : ");
+                Serial.println(lat, 6);
+
+                Serial.print("Longitude: ");
+                Serial.println(lng, 6);
+
+                Serial.print("Google Maps: ");
+                Serial.print("https://maps.google.com/?q=");
+                Serial.print(lat, 6);
+                Serial.print(",");
+                Serial.println(lng, 6);
+
+                sendAccident(lat, lng);
+            }
+            else
+            {
+                Serial.println("GPS Fix Not Available");
+            }
+        }
+    }
+
+    // ---------- Reset ----------
+    if (!accident)
+    {
+        accidentTriggered = false;
+    }
+
+    delay(200);
+}
+
+

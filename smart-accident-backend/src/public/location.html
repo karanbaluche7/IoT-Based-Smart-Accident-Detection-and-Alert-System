@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Phone GPS Location</title>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 30px;
+        }
+
+        button {
+            padding: 15px 25px;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        #status {
+            margin-top: 20px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+    <h2>Accident Detection GPS</h2>
+
+    <p id="status">
+        Press the button to start GPS.
+    </p>
+
+    <button onclick="startGPS()">
+        Start GPS
+    </button>
+
+    <script>
+
+        let watchId = null;
+
+        function startGPS() {
+
+            if (!navigator.geolocation) {
+
+                document.getElementById("status").innerText =
+                    "GPS is not supported by this browser.";
+
+                return;
+            }
+
+            document.getElementById("status").innerText =
+                "Getting phone location...";
+
+            watchId = navigator.geolocation.watchPosition(
+
+                sendLocation,
+
+                locationError,
+
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 5000,
+                    timeout: 10000
+                }
+
+            );
+        }
+
+        function sendLocation(position) {
+
+            const latitude =
+                position.coords.latitude;
+
+            const longitude =
+                position.coords.longitude;
+
+            const accuracy =
+                position.coords.accuracy;
+
+            document.getElementById("status").innerHTML =
+                "GPS Active<br>" +
+                "Latitude: " + latitude.toFixed(6) +
+                "<br>" +
+                "Longitude: " + longitude.toFixed(6) +
+                "<br>" +
+                "Accuracy: " +
+                accuracy.toFixed(1) +
+                " meters";
+
+            fetch("/api/location", {
+
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body: JSON.stringify({
+
+                    latitude: latitude,
+
+                    longitude: longitude,
+
+                    accuracy: accuracy
+
+                })
+
+            })
+
+            .then(response => response.json())
+
+            .then(data => {
+
+                console.log(
+                    "Location sent:",
+                    data
+                );
+
+            })
+
+            .catch(error => {
+
+                console.error(
+                    "Location send error:",
+                    error
+                );
+
+            });
+        }
+
+        function locationError(error) {
+
+            document.getElementById("status").innerText =
+                "Unable to get GPS location. " +
+                "Please allow location permission.";
+
+            console.error(error);
+
+        }
+
+    </script>
+
+</body>
+
+</html>
